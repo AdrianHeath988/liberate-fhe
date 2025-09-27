@@ -42,6 +42,23 @@ ext_modules_ntt = [
     )
 ]
 
+# --- New Module for Bootstrapping ---
+ext_modules_bootstrapping = [
+    CUDAExtension(
+        name="fhe_ops_cuda",
+        sources=[
+            "src/liberate/fhe/bootstrapping/fhe_ops.cpp",
+            "src/liberate/fhe/bootstrapping/mod_raise_kernel.cu",
+            # Include NTT sources to resolve link-time dependencies
+            "src/liberate/ntt/ntt.cpp",
+            "src/liberate/ntt/ntt_cuda_kernel.cu",
+        ],
+        # Add include directory so C++ can find the header files
+        include_dirs=["src/liberate/"]
+    )
+]
+
+
 if __name__ == "__main__":
     setup(
         name="csprng",
@@ -67,3 +84,15 @@ if __name__ == "__main__":
         },
     )
 
+    # --- New Setup Call for Bootstrapping ---
+    setup(
+        name="bootstrapping",
+        ext_modules=ext_modules_bootstrapping,
+        script_args=["build_ext"],
+        cmdclass={"build_ext": BuildExtension},
+        options={
+            "build": {
+                "build_lib": "src/liberate/fhe/bootstrapping",
+            }
+        },
+    )
