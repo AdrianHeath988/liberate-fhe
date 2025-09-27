@@ -13,14 +13,7 @@
             " in file " + __FILE__ + " at line " + std::to_string(__LINE__)); \
     } \
 }
-//
-// FORWARD DECLARATION:
-// Copied from the ntt.cpp file to make the function available here.
-// This tells the compiler that a function with this signature exists in another file.
-//
-void ntt_kernel_wrapper(const uint64_t* in, uint64_t* out,
-                        const uint64_t* r, const uint64_t* m,
-                        int n_power, bool forward, cudaStream_t stream);
+
 
 
 namespace py = pybind11;

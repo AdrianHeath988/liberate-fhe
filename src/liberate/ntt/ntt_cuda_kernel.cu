@@ -4,7 +4,54 @@
 #include <cuda_runtime.h>
 
 #define BLOCK_SIZE 256
+// updated ntt_cuda_kernel.cu
+#include <cuda_runtime.h>
+#include "ntt.h"
 
+// Update the kernel to accept moduli, even if unused for now
+__global__ void ntt_kernel(const unsigned long* in, unsigned long* out, const unsigned long* psi, const unsigned long* moduli, int n, bool forward) {
+    // This is a simplified NTT kernel implementation.
+    // IMPORTANT: You must implement modular arithmetic using the 'moduli' parameter.
+    extern __shared__ unsigned long sdata[];
+
+    int tid = threadIdx.x;
+    int i = tid;
+
+    // Copy to shared memory (simplified)
+    if (i < n) sdata[i] = in[i];
+    __syncthreads();
+
+    // Butterfly operations (simplified)
+    for (int m = 2; m <= n; m <<= 1) {
+        int mh = m >> 1;
+        for (int j = tid; j < n; j += blockDim.x) {
+             int k = j & (mh - 1);
+             int r = j - k;
+             if (r < n){
+                unsigned long w = psi[(n/m)*k];
+                // IMPORTANT: Replace with your modular arithmetic
+                unsigned long t = sdata[r + k + mh] * w;
+                unsigned long u = sdata[r + k];
+                sdata[r + k] = u + t;
+                sdata[r + k + mh] = u - t;
+             }
+        }
+        __syncthreads();
+    }
+
+    // Write back to global memory
+    if (i < n) out[i] = sdata[i];
+}
+
+// Update the definition of the kernel wrapper function
+void ntt_kernel_wrapper(const unsigned long* a, unsigned long* b, const unsigned long* psi, const unsigned long* moduli, int N, bool forward, cudaStream_t stream) {
+    const int threads_per_block = N / 2;
+    const int blocks_per_grid = 1;
+    size_t shared_mem_size = N * sizeof(unsigned long);
+
+    // Launch the kernel with the new moduli argument
+    ntt_kernel<<<blocks_per_grid, threads_per_block, shared_mem_size, stream>>>(a, b, psi, moduli, N, forward);
+}
 //------------------------------------------------------------------
 // pointwise mont_mult
 //------------------------------------------------------------------

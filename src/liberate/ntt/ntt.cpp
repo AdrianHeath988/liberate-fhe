@@ -442,5 +442,19 @@ std::vector<torch::Tensor> tile_unsigned(
 // // Add this line after the module definition
 // #endif // COMPILING_FHE_OPS
 void bind_ntt_modules(py::module_ &m) {
-    m.def("ntt", &ntt, "NTT");
+    m.def("mont_mult", &mont_mult, "MONTGOMERY MULTIPLICATION");
+    m.def("mont_enter", &mont_enter, "ENTER MONTGOMERY");
+    m.def("ntt", &ntt, "FORWARD NTT");
+    m.def("enter_ntt", &enter_ntt, "ENTER -> FORWARD NTT");
+    m.def("intt", &intt, "INVERSE NTT");
+    m.def("mont_redc", &mont_redc, "MONTGOMERY REDUCTION");
+    m.def("intt_exit", &intt_exit, "INVERSE NTT -> EXIT");
+    m.def("intt_exit_reduce", &intt_exit_reduce, "INVERSE NTT -> EXIT -> REDUCE");
+    m.def("intt_exit_reduce_signed", &intt_exit_reduce_signed, "INVERSE NTT -> EXIT -> REDUCE -> MAKE SIGNED");
+    m.def("reduce_2q", &reduce_2q, "REDUCE RANGE TO 2q");
+    m.def("make_signed", &make_signed, "MAKE SIGNED");
+    m.def("make_unsigned", &make_unsigned, "MAKE UNSIGNED");
+    m.def("mont_add", &mont_add, "MONTGOMERY ADDITION");
+    m.def("mont_sub", &mont_sub, "MONTGOMERY SUBTRACTION");
+    m.def("tile_unsigned", &tile_unsigned, "TILE -> MAKE UNSIGNED");
 }

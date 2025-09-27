@@ -5,7 +5,7 @@ from collections import namedtuple
 # After building, the C++ module will be available at this path.
 from liberate.liberate_fhe_cuda import mod_raise_gpu
 from liberate.fhe.ckks_engine import ckks_engine
-from liberate.fhe.context.ckks_context import CKKSContext
+from liberate.fhe.context.ckks_context import ckks_context
 
 # --- Python Mirror of the C++ Struct ---
 # We create a named tuple to match the Modulus64 struct in C++.
@@ -33,7 +33,9 @@ def test_mod_raise():
     p_size = len(p_primes)
 
     # The CKKSContext needs to be aware of both sets of primes
-    context = CKKSContext(N, log_scale, q_primes, p_primes=p_primes)
+    logN = 15
+    context = ckks_context(logN=logN, scale_bits=log_scale, num_scales=len(q_primes))
+
     
     # The full modulus chain for the raised ciphertext
     full_modulus_chain = context.bootstrapping_modulus_chain

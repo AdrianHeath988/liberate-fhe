@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 #  import discrete_gaussian_cuda
-from . import discrete_gaussian_cuda
+from liberate.liberate_fhe_cuda.csprng import discrete_gaussian_sample as discrete_gaussian_cuda
 
 
 def build_CDT_binary_search_tree(security_bits=128, sigma=3.2):

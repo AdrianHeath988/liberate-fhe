@@ -8,9 +8,14 @@
 namespace py = pybind11;
 
 // This declares the NTT wrapper function, making it visible to other files.
-void ntt_kernel_wrapper(const uint64_t* in, uint64_t* out,
-                        const uint64_t* r, const uint64_t* m,
-                        int n_power, bool forward, cudaStream_t stream);
+// updated ntt.h
+void ntt_kernel_wrapper(const unsigned long* a,
+                        unsigned long* b,
+                        const unsigned long* psi,
+                        const unsigned long* moduli, // Add this parameter
+                        int N,
+                        bool forward,
+                        cudaStream_t stream);
 
 // This declares the Python binding function for the NTT module.
 void bind_ntt_modules(py::module_ &m);

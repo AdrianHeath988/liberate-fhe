@@ -1,11 +1,5 @@
 #include <stdint.h>
-
-struct Modulus64 {
-    uint64_t p;
-    uint64_t p_twice;
-    uint64_t p_word_size;
-    uint64_t p_mod_inv;
-};
+#include "mod_raise_kernel.h"
 
 // Simplified modular reduction function
 __device__ uint64_t reduce_forced(uint64_t input, Modulus64 mod) {
@@ -33,4 +27,16 @@ __global__ void mod_raise_kernel(const uint64_t* input, uint64_t* output,
     uint64_t input_val = input[location_input];
     // Reduce the coefficient by the new prime
     output[location_output] = reduce_forced(input_val, modulus[q_size + idy]);
+}
+void mod_raise_kernel_wrapper(const unsigned long* ct_in,
+                              unsigned long* ct_out,
+                              const Modulus64* moduli,
+                              int num_polys,
+                              int num_moduli,
+                              int N,
+                              cudaStream_t stream) {
+    const dim3 threads(N);
+    const dim3 blocks(num_polys);
+
+    mod_raise_kernel<<<blocks, threads, 0, stream>>>(ct_in, ct_out, moduli, num_polys, num_moduli, N);
 }
