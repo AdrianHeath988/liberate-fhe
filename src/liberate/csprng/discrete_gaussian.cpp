@@ -63,7 +63,7 @@ std::vector<torch::Tensor> discrete_gaussian_fast(std::vector<torch::Tensor> sta
     return outputs;
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("discrete_gaussian", &discrete_gaussian, "discrete gaussian sampling (128 bits).");
-    m.def("discrete_gaussian_fast", &discrete_gaussian_fast, "discrete gaussian sampling fast (chacha20 fused, 128 bits).");
+void bind_discrete_gaussian(py::module_ &m) {
+    m.def("discrete_gaussian_sample", &discrete_gaussian, "Sample from a discrete Gaussian distribution");
 }
+

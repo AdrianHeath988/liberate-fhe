@@ -49,7 +49,6 @@ std::vector<torch::Tensor> randint_fast(
     return outputs;
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("randint", &randint, "random integer sampling (0 to q, 64 bits).");
-    m.def("randint_fast", &randint_fast, "random integer sampling (randint fused, 0 to q, 64 bits).");
+void bind_randint(py::module_ &m) {
+    m.def("randint", &randint, "Generate random integers uniformly in [0, modulus)");
 }

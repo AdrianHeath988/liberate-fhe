@@ -4,12 +4,13 @@ import os
 import numpy as np
 import torch
 
-from . import (
-    chacha20_cuda,
-    discrete_gaussian_cuda,
-    randint_cuda,
-    randround_cuda,
-)
+# from . import (
+#     chacha20_cuda,
+#     discrete_gaussian_cuda,
+#     randint_cuda,
+#     randround_cuda,
+# )
+from liberate.liberate_fhe_cuda import csprng
 from .discrete_gaussian_sampler import build_CDT_binary_search_tree
 
 torch.backends.cudnn.benchmark = True

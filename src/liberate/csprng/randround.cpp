@@ -27,6 +27,6 @@ void randround(std::vector<torch::Tensor> inputs,
     }
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("randround", &randround, "random rounding.");
+void bind_randround(py::module_ &m) {
+    m.def("randround", &randround, "Randomly round a value");
 }

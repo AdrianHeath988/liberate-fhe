@@ -38,6 +38,6 @@ std::vector<torch::Tensor> chacha20(std::vector<torch::Tensor> inputs, size_t st
     return outputs;
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("chacha20", &chacha20, "CHACHA20 (CUDA)");
+void bind_chacha20(py::module_ &m) {
+    m.def("chacha20", &chacha20, "ChaCha20 CSPRNG");
 }

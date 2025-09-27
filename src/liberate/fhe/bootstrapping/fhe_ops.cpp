@@ -2,7 +2,7 @@
 #include <pybind11/numpy.h>
 #include <cstdint>
 #include <cuda_runtime.h>
-
+#include "liberate/ntt/ntt.h"
 #include "mod_raise_kernel.h"
 
 #define CUDA_CHECK(err) { \
@@ -101,8 +101,7 @@ py::tuple mod_raise_gpu(
     return py::make_tuple(result_array);
 }
 
-PYBIND11_MODULE(fhe_ops_cuda, m) {
-    m.doc() = "GPU accelerated operations for FHE bootstrapping";
+void bind_bootstrapping_modules(py::module_ &m) {
     m.def("mod_raise_gpu", &mod_raise_gpu,
           "Performs the modulus raising operation (INTT -> mod_raise -> NTT) on the GPU",
           py::arg("ct_in"), py::arg("ntt_table"), py::arg("intt_table"),
