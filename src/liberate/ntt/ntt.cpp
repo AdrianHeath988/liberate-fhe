@@ -442,6 +442,7 @@ std::vector<torch::Tensor> tile_unsigned(
 // // Add this line after the module definition
 // #endif // COMPILING_FHE_OPS
 void bind_ntt_modules(py::module_ &m) {
+    std::cout << "In bind_ntt_modules" << std::endl;
     m.def("mont_mult", &mont_mult, "MONTGOMERY MULTIPLICATION");
     m.def("mont_enter", &mont_enter, "ENTER MONTGOMERY");
     m.def("ntt", &ntt, "FORWARD NTT");
