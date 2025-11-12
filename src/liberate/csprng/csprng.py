@@ -239,7 +239,7 @@ class Csprng:
             target_states.append(device_states.view(-1, 16))
 
         # Derive random bytes.
-        random_bytes = chacha20_cuda.chacha20(target_states, self.inc)
+        random_bytes = csprng.chacha20(target_states, self.inc)
 
         # If not reshape, flatten.
         if reshape:
@@ -274,7 +274,7 @@ class Csprng:
             target_states.append(device_states)
 
         # Generate the randint.
-        rand_int = randint_cuda.randint_fast(
+        rand_int = csprng.randint_fast(
             target_states, q_ptr, shift, self.inc
         )
 
@@ -297,7 +297,7 @@ class Csprng:
             target_states.append(device_states.view(-1, 16))
 
         # Generate the randint.
-        rand_int = discrete_gaussian_cuda.discrete_gaussian_fast(
+        rand_int = csprng.discrete_gaussian_fast(
             target_states,
             self.btree_ptr,
             self.btree_size,
@@ -320,5 +320,5 @@ class Csprng:
         rand_bytes = chacha20_cuda.chacha20((self.states[0][:L],), self.inc)[
             0
         ].ravel()
-        randround_cuda.randround([coef], [rand_bytes])
+        csprng.randround([coef], [rand_bytes])
         return rand_bytes

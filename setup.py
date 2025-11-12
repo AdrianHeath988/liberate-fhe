@@ -5,7 +5,7 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 ext_modules = [
     CUDAExtension(
         # The full import path of the C++ module
-        name="liberate.ntt.ntt_cuda",
+        name="liberate.liberate_fhe_cuda",
         sources=[
             # Main entry point that defines the Python module
             "src/liberate/liberate_fhe_cuda.cpp",

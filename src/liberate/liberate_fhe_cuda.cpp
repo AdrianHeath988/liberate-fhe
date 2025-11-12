@@ -9,7 +9,7 @@ void bind_ntt_modules(py::module_ &m);
 void bind_bootstrapping_modules(py::module_ &m);
 
 // The one and only PYBIND11_MODULE definition
-PYBIND11_MODULE(ntt_cuda, m) {
+PYBIND11_MODULE(liberate_fhe_cuda, m) {
     m.doc() = "Unified CUDA backend for Liberate.FHE";
 
     // Call the binding functions to add all submodules

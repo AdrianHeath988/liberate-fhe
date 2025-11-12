@@ -51,4 +51,5 @@ std::vector<torch::Tensor> randint_fast(
 
 void bind_randint(py::module_ &m) {
     m.def("randint", &randint, "Generate random integers uniformly in [0, modulus)");
+    m.def("randint_fast", &randint_fast, "Generate random integers (fast version)");
 }
