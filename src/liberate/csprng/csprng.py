@@ -317,7 +317,7 @@ class Csprng:
         # contiguous stream of states.
         # It will not make the target state strided.
         L = self.num_coefs // 16
-        rand_bytes = chacha20_cuda.chacha20((self.states[0][:L],), self.inc)[
+        rand_bytes = csprng.chacha20((self.states[0][:L],), self.inc)[
             0
         ].ravel()
         csprng.randround([coef], [rand_bytes])
