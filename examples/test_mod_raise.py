@@ -2,7 +2,6 @@ import numpy as np
 from collections import namedtuple
 
 
-from liberate.liberate_fhe_cuda import mod_raise_gpu
 from liberate.fhe.ckks_engine import ckks_engine
 from liberate.fhe.context.ckks_context import ckks_context
 from liberate.fhe import presets
@@ -44,6 +43,9 @@ def test_ctos():
 
     pt = engine.encode(m=test_message, level=level)
     ct = engine.encrypt(pt=pt, pk=public_key, level=level)
+
+    p = engine.ctos(ct = ct)
+
 
     pt_dec = engine.decrypt(ct=ct, sk=secret_key)
     test_message_dec = engine.decode(m=pt_dec, level=level)

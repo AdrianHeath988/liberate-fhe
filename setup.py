@@ -24,6 +24,7 @@ ext_modules = [
             "src/liberate/ntt/ntt_cuda_kernel.cu",
             "src/liberate/fhe/bootstrapping/fhe_ops.cpp",
             "src/liberate/fhe/bootstrapping/mod_raise_kernel.cu",
+            "src/liberate/fhe/bootstrapping/ctos.cu",
         ],
         include_dirs=["src/"]
     )
