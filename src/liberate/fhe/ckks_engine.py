@@ -1748,16 +1748,12 @@ class ckks_engine:
 
         # Lazy-create a bootstrapping context that reuses ntt parameter packing.
         if not hasattr(self, "bootstrap_ctx") or self.bootstrap_ctx is None:
-            from liberate.fhe.bootstrapping.bootstrapping_context import BootstrappingContext
+            from .bootstrapping.bootstrapping_context import BootstrappingContext
 
         self.bootstrap_ctx = BootstrappingContext(ct, devices=self.ntt.devices, verbose=self.ntt.verbose if hasattr(self.ntt, 'verbose') else False)
 
-        # If moduli isn't already a numpy structured array, let the bootstrapping
-        # helper create one from an iterable of tuples
-        if not hasattr(moduli, 'dtype'):
-            moduli = self.bootstrap_ctx.make_moduli_array(moduli)
-
-        return self.bootstrap_ctx.ctos(ct, moduli, 0, 0, 0)
+        print("[Info] Going deeper into CTOS")
+        return self.bootstrap_ctx.ctos(ct, [], 0, 0, 0)
 
     # -------------------------------------------------------------------------------------------
     # Clone.

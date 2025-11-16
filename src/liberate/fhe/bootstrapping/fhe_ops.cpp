@@ -23,22 +23,27 @@ py::tuple mod_raise_gpu(
     py::array_t<uint64_t, py::array::c_style | py::array::forcecast> ct_in,
     py::array_t<uint64_t, py::array::c_style | py::array::forcecast> ntt_table,
     py::array_t<uint64_t, py::array::c_style | py::array::forcecast> intt_table,
-    py::array_t<Modulus64, py::array::c_style | py::array::forcecast> moduli,
+    py::array moduli, // accept flexible numpy array for moduli (structured or Nx4 uint64)
     int n_power,
     int q_size,
     int p_size
 ) {
-    
+    // NOTE: Implementation omitted for now. The important change is accepting a
+    // generic numpy array for `moduli` so callers can pass either a structured
+    // dtype or a plain (N,4) uint64 array. Real implementation should mirror
+    // the conversion logic used in ctos_gpu below.
+    throw std::runtime_error("mod_raise_gpu is not implemented in this build");
 }
 
 
 py::array_t<uint64_t> ctos_gpu(
     py::array_t<uint64_t, py::array::c_style | py::array::forcecast> ct_in,
-    py::array_t<Modulus64, py::array::c_style | py::array::forcecast> moduli,
+    py::array moduli, // accept flexible numpy array for moduli (structured or Nx4 uint64)
     int n_power,
     int q_size,
     int p_size
 ) {
+    std::cout << "In ctos_gpu function" << std::endl;
     // Request buffer info
     auto in_buf = ct_in.request();
     size_t total_elems = static_cast<size_t>(in_buf.size);
@@ -53,8 +58,32 @@ py::array_t<uint64_t> ctos_gpu(
         return out;
     }
 
+    // Accept either a structured array of Modulus64 or an (N,4) uint64 array.
     auto mod_buf = moduli.request();
-    size_t mod_count = static_cast<size_t>(mod_buf.size);
+    size_t mod_count = 0;
+    std::vector<Modulus64> mod_host;
+    // Case A: caller passed an (N,4) uint64 array
+    if (mod_buf.format == py::format_descriptor<uint64_t>::format() && mod_buf.ndim == 2 && mod_buf.shape[1] == 4) {
+        mod_count = static_cast<size_t>(mod_buf.shape[0]);
+        uint64_t *flat = static_cast<uint64_t*>(mod_buf.ptr);
+        mod_host.resize(mod_count);
+        for (size_t i = 0; i < mod_count; ++i) {
+            mod_host[i].p = flat[i*4 + 0];
+            mod_host[i].p_twice = flat[i*4 + 1];
+            mod_host[i].p_word_size = flat[i*4 + 2];
+            mod_host[i].p_mod_inv = flat[i*4 + 3];
+        }
+    }
+    // Case B: structured dtype whose items match sizeof(Modulus64)
+    else if (mod_buf.ndim == 1 && static_cast<size_t>(mod_buf.itemsize) == sizeof(Modulus64)) {
+        mod_count = static_cast<size_t>(mod_buf.shape[0]);
+        mod_host.resize(mod_count);
+        memcpy(mod_host.data(), mod_buf.ptr, mod_count * sizeof(Modulus64));
+    }
+    else {
+        throw std::runtime_error("Unsupported moduli array format; expected structured dtype compatible with Modulus64 or an (N,4) uint64 array");
+    }
+
     if (mod_count == 0) {
         throw std::runtime_error("moduli array must not be empty");
     }
