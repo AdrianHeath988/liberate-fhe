@@ -1753,7 +1753,7 @@ class ckks_engine:
         self.bootstrap_ctx = BootstrappingContext(ct, devices=self.ntt.devices, verbose=self.ntt.verbose if hasattr(self.ntt, 'verbose') else False)
 
         print("[Info] Going deeper into CTOS")
-        return self.bootstrap_ctx.ctos(ct, [], 0, 0, 0)
+        return self.bootstrap_ctx.ctos(ct, None, 0, 0, 0)
 
     # -------------------------------------------------------------------------------------------
     # Clone.
