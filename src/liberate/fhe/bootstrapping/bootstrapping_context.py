@@ -2,6 +2,7 @@
 import numpy as np
 from liberate.ntt import ntt_context
 from liberate.liberate_fhe_cuda import bootstrapping as cuda_boot
+from liberate.fhe.presets import types
 def _ct_to_numpy_uint64(ct_in, moduli=None):
     """Flatten ct_in.data (list-of-lists of torch tensors) into a numpy.uint64 array.
     Also produce a NumPy array compatible with the C `Modulus64` struct.
@@ -56,24 +57,83 @@ def _ct_to_numpy_uint64(ct_in, moduli=None):
     return ct_np, mod_np
 
 class BootstrappingContext:
-    def __init__(self, ctx, devices=None, verbose=False):
-        # reuse ntt_context for NTT parameter packing and device tensors
-        # self.ntt = ntt_context(ctx, devices=devices, verbose=verbose)
-        # self.ctx = ctx
-        # self.devices = self.ntt.devices
-        print("init BootstrappingContext")
+    def __init__(self, engine, ctx, devices=None, verbose=False):
+        self.engine = engine  # Store the engine to access .rotate_single, .mult, .add
+        self.ctx = ctx
+        self.devices = devices
+        
+        # Pre-compute standard parameters
+        self.N = ctx.N
+        self.slots = self.N // 2
+        # BSGS Parameters (e.g., sqrt(slots))
+        self.baby_steps = int(np.ceil(np.sqrt(self.slots)))
+        self.giant_steps = int(np.ceil(self.slots / self.baby_steps))
 
-    def ctos(self, ct_in: np.ndarray, moduli, n_power:int, q_size:int, p_size:int):
-        #ct_in = np.ascontiguousarray(ct_in, dtype=np.uint64)
-        # cuda_boot.ctos_gpu is the binding registered under liberate_fhe_cuda.bootstrapping
-        ct_np, moduli_np = _ct_to_numpy_uint64(ct_in, None) # 2nd should be moduli
-        print (moduli_np)
-        print (ct_np)
-        print("In BootstrappingContext ctos, going even deeper")
-        return cuda_boot.ctos_gpu(ct_np, moduli_np, int(n_power), int(q_size), int(p_size))
+    def generate_diagonal(self, k, level):
+        """
+        Generates the k-th diagonal of the DFT matrix.
+        TODO: replace this with a CUDA Kernel later
+        """
+        # 1. Generate roots of unity U[i] = zeta^i
+        # 2. Create diagonal vector: d[i] = U[i * k] (Simplified)
+        # 3. Encode this vector to a Plaintext (pt) using engine.encode
+        #BUT: must ensure it is encoded to the correct 'level'.
+        
+        # Placeholder logic:
+        m_vec = np.array([np.exp(2j * np.pi * i * k / (2*self.slots)) for i in range(self.slots)])
+        return self.engine.encode(m_vec, level=level)
 
-    def mod_raise(self, ct_in, ntt_table, intt_table, moduli, n_power, q_size, p_size):
-        ct_in = np.ascontiguousarray(ct_in, dtype=np.uint64)
-        ntt_table = np.ascontiguousarray(ntt_table, dtype=np.uint64)
-        intt_table = np.ascontiguousarray(intt_table, dtype=np.uint64)
-        return cuda_boot.mod_raise_gpu(ct_in, ntt_table, intt_table, moduli, n_power, q_size, p_size)
+    def ctos(self, ct_in):
+        """
+        Performs CoeffToSlot using BSGS in Python.
+        """
+        current_level = ct_in.level
+        
+        #Giant Step Loop
+        total_sum = None
+        
+        for g in range(self.giant_steps):
+            giant_rot_idx = g * self.baby_steps
+            
+            # Inner Accumulator
+            inner_sum = None
+            
+            # Baby Step Loop
+            for b in range(self.baby_steps):
+                rot_idx = giant_rot_idx + b
+                if rot_idx >= self.slots: 
+                    break
+
+                # 1. Get the Rotation Key
+                # Ensure you have generated these keys in your setup phase!
+                rotk_name = f"{types.origins['rotk']}{rot_idx}"
+                # You might need a lookup dictionary for keys passed in args
+                # rotk = self.engine.galois_keys[rot_idx]
+                
+                # 2. Rotate Ciphertext (Reuses KeySwitch/ModRaise from engine)
+                # Note: To optimize, rotate 'ct_in' only once for the baby step 
+                # if the math allows, or rotate the accumulated result. 
+                # Standard BSGS: inner_sum += diag_k * rot_k(ct)
+                
+                # Perform Rotation
+                # rotated_ct = self.engine.rotate_single(ct_in, rotk)
+                
+                # 3. Get Diagonal (Plaintext)
+                # diag_pt = self.generate_diagonal(rot_idx, current_level)
+                
+                # 4. Multiply
+                # term = self.engine.mult(rotated_ct, diag_pt, relin=False)
+                
+                # 5. Accumulate
+                # if inner_sum is None: inner_sum = term
+                # else: inner_sum = self.engine.add(inner_sum, term)
+
+            # --- Apply Giant Rotation to the inner sum ---
+            # This is the optimization: Rotate the SUM, not every term.
+            # giant_rotk = ...
+            # rotated_inner = self.engine.rotate_single(inner_sum, giant_rotk)
+            
+            # if total_sum is None: total_sum = rotated_inner
+            # else: total_sum = self.engine.add(total_sum, rotated_inner)
+            
+        return total_sum

@@ -1739,21 +1739,13 @@ class ckks_engine:
     # -----------------------------------------------------------------------------------------------
     @errors.log_error
     def ctos(self, ct: data_struct):
-        """Perform the CTOS operation (ciphertext-to-slot) using the CUDA binding.
-
-        Creates a new ct.
-        """
-        print("[Info] Starting CTOS operation in ckks_engine.py")
-        import numpy as _np
-
-        # Lazy-create a bootstrapping context that reuses ntt parameter packing.
+        # Pass 'self' (the engine) so BootstrappingContext can use engine.rotate_single
         if not hasattr(self, "bootstrap_ctx") or self.bootstrap_ctx is None:
             from .bootstrapping.bootstrapping_context import BootstrappingContext
+            # FIX: Pass 'self' as the engine, and 'self.ctx' as the context
+            self.bootstrap_ctx = BootstrappingContext(self, self.ctx, devices=self.ntt.devices)
 
-        self.bootstrap_ctx = BootstrappingContext(ct, devices=self.ntt.devices, verbose=self.ntt.verbose if hasattr(self.ntt, 'verbose') else False)
-
-        print("[Info] Going deeper into CTOS")
-        return self.bootstrap_ctx.ctos(ct, None, 0, 0, 0)
+        return self.bootstrap_ctx.ctos(ct)
 
     # -------------------------------------------------------------------------------------------
     # Clone.

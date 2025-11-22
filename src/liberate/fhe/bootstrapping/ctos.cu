@@ -34,3 +34,17 @@ void ctos_kernel_wrapper(
 	// Do not synchronize here; caller synchronizes the stream after the wrapper returns.
 }
 
+// Simple permutation kernel: out[i] = in[map[i]]
+__global__ void permute_kernel(const uint64_t* in, uint64_t* out, const int* map, size_t n) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        out[idx] = in[map[idx]];
+    }
+}
+
+// Wrapper
+void permute_gpu(const uint64_t* in, uint64_t* out, const int* map, size_t n, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    permute_kernel<<<blocks, threads, 0, stream>>>(in, out, map, n);
+}
