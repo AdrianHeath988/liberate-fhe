@@ -1738,14 +1738,69 @@ class ckks_engine:
     # Bootstrapping
     # -----------------------------------------------------------------------------------------------
     @errors.log_error
-    def ctos(self, ct: data_struct):
+    def create_bootstrapping_keys(self, sk: data_struct) -> data_struct:
+        """
+        Generates the set of rotation keys (Galois keys) required for the 
+        Baby-Step Giant-Step (BSGS) algorithm used in bootstrapping.
+        """
+        if sk.origin != types.origins["sk"]:
+            raise errors.NotMatchType(origin=sk.origin, to=types.origins["sk"])
+
+        num_slots = self.ctx.N // 2
+
+        # Calculate grid dimensions for BSGS
+        # n1: dimension for giant steps (inner loop)
+        # n2: dimension for baby steps (outer loop)
+        n1 = int(math.ceil(math.sqrt(num_slots)))
+        n2 = int(math.ceil(num_slots / n1))
+
+        required_rotations = set()
+
+        # Giant steps: Rotations by multiples of n1
+        # We iterate 1 to n1-1 because 0 is a null rotation.
+        for i in range(1, n1):
+            required_rotations.add(n1 * i)
+
+        # Baby steps: Rotations by j
+        # We iterate 1 to n2-1 because 0 is a null rotation.
+        for j in range(1, n2):
+            required_rotations.add(j)
+
+        # Generate keys
+        # Sorting ensures a deterministic order in the data structure
+        sorted_deltas = sorted(list(required_rotations))
+        
+        galois_key_parts = []
+        for delta in sorted_deltas:
+            galois_key_parts.append(self.create_rotation_key(sk, delta))
+
+        # Return a data_struct labeled as a Galois key ("galk")
+        # This structure holds the list of individual rotation keys
+        return data_struct(
+            data=galois_key_parts,
+            include_special=True,
+            ntt_state=True,
+            montgomery_state=True,
+            origin=types.origins["galk"],
+            level=0,
+            hash=self.hash,
+            version=self.version
+        )
+    
+    @errors.log_error
+    def ctos(self, ct: data_struct, galk: data_struct):
         # Pass 'self' (the engine) so BootstrappingContext can use engine.rotate_single
+        print("[Info] Starting CTOS operation in ckks_engine.py")
+
+        # Lazy-create a bootstrapping context, passing SELF (the engine)
         if not hasattr(self, "bootstrap_ctx") or self.bootstrap_ctx is None:
             from .bootstrapping.bootstrapping_context import BootstrappingContext
-            # FIX: Pass 'self' as the engine, and 'self.ctx' as the context
-            self.bootstrap_ctx = BootstrappingContext(self, self.ctx, devices=self.ntt.devices)
+            # Pass 'self' so BootstrappingContext can use engine.rotate, engine.mult, etc.
+            self.bootstrap_ctx = BootstrappingContext(self, verbose=self.ntt.verbose if hasattr(self.ntt, 'verbose') else False)
 
-        return self.bootstrap_ctx.ctos(ct)
+        print("[Info] Executing BSGS CTOS")
+        # Call the Python implementation
+        return self.bootstrap_ctx.ctos(ct, galk)
 
     # -------------------------------------------------------------------------------------------
     # Clone.
