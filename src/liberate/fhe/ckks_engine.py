@@ -781,6 +781,8 @@ class ckks_engine:
             for part_id, part in enumerate(self.ntt.p.p[level][src_device_id]):
                 storage_id = self.stor_ids[level][src_device_id][part_id]
                 alpha = len(part)
+                # Need to verify if ksk_buffers structure matches this access pattern
+                # Assuming ksk_buffers is [device_id][part_id]
                 CPU_state = self.ksk_buffers[src_device_id][part_id][:alpha]                
                 CPU_state.copy_(states[storage_id], non_blocking=True)
                 CPU_states[storage_id] = CPU_state
@@ -799,26 +801,34 @@ class ckks_engine:
                 part_results[storage_id][1][src_device_id] = d1
         
         # 4. Copy onto neighbor GPUs the states.
-        CUDA_states = [[] for _ in range(num_parts)]
+        # [FIX] Use a dictionary to store states per (storage_id, dst_device_id)
+        # to prevent overwriting when multiple neighbors exist.
+        CUDA_states = {} 
+        
         for src_device_id in range(len_devices):
             for j, dst_device_id in enumerate(
                     neighbor_devices[src_device_id]):           
                 for part_id, part in enumerate(self.ntt.p.p[level][src_device_id]):
                     storage_id = self.stor_ids[level][src_device_id][part_id]
                     CPU_state = CPU_states[storage_id]
-                    CUDA_states[storage_id] = CPU_state.cuda(
+                    
+                    # Store with unique key
+                    CUDA_states[(storage_id, dst_device_id)] = CPU_state.cuda(
                         self.ntt.devices[dst_device_id], non_blocking=True)
                     
         # 5. Synchronize.
         # torch.cuda.synchronize()
         
-        #6. Do follow ups on neighbors.
+        # 6. Do follow ups on neighbors.
         for src_device_id in range(len_devices):
             for j, dst_device_id in enumerate(
                     neighbor_devices[src_device_id]):
                 for part_id, part in enumerate(self.ntt.p.p[level][src_device_id]):
                     storage_id = self.stor_ids[level][src_device_id][part_id]
-                    CUDA_state = CUDA_states[storage_id]
+                    
+                    # [FIX] Retrieve the correct tensor for this specific destination device
+                    CUDA_state = CUDA_states[(storage_id, dst_device_id)]
+                    
                     d0, d1 = self.switcher_later_part(CUDA_state,
                                            ksk,
                                            src_device_id,
@@ -831,7 +841,6 @@ class ckks_engine:
         # 7. Sum up.
         summed0 = part_results[0][0]
         summed1 = part_results[0][1]
-        
         
         for i in range(1, len(part_results)):
             summed0 = self.ntt.mont_add(

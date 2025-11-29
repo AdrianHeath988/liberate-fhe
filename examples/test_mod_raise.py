@@ -18,7 +18,7 @@ def test_ctos():
     ctx_params = {
         "buffer_bit_length":62,
         "scale_bits":40,
-        "logN":14,
+        "logN":15,
         "num_scales":None,
         "num_special_primes":2,
         "sigma":3.2,
@@ -30,7 +30,7 @@ def test_ctos():
         "read_cache":True,
         "save_cache":True,
         "verbose":True, 
-        "devices": [0, 1]
+        "devices": [0,1,2,3],
     }
     params = presets.params["silver"]
     print(params)

@@ -80,8 +80,12 @@ class rns_partition:
             special_removed(i) for i in range(self.num_ordinary_primes)
         ]
 
-        lint = lambda arr: [a for a in arr if len(a) > 0]
-        self.destination_arrays = [lint(a) for a in self.destination_arrays]
+        # [FIX] The following lines caused the IndexError by removing empty device arrays.
+        # When a device has no ordinary primes (common with high device count), 
+        # its index must be preserved as an empty list, not removed.
+        
+        # lint = lambda arr: [a for a in arr if len(a) > 0]
+        # self.destination_arrays = [lint(a) for a in self.destination_arrays]
 
     def compute_rescaler_locations(self):
         mins = lambda arr: [min(a) for a in arr]
