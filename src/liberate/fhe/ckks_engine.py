@@ -817,7 +817,7 @@ class ckks_engine:
                         self.ntt.devices[dst_device_id], non_blocking=True)
                     
         # 5. Synchronize.
-        # torch.cuda.synchronize()
+        torch.cuda.synchronize()
         
         # 6. Do follow ups on neighbors.
         for src_device_id in range(len_devices):
