@@ -146,6 +146,9 @@ void mont_mult_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -233,6 +236,9 @@ void mont_enter_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -334,6 +340,9 @@ void ntt_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -406,6 +415,9 @@ void enter_ntt_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -533,6 +545,9 @@ void intt_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -662,6 +677,9 @@ void mont_redc_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -766,6 +784,9 @@ void intt_exit_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -829,6 +850,9 @@ void intt_exit_reduce_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -896,6 +920,9 @@ void intt_exit_reduce_signed_cuda_typed(
     const torch::Tensor kl,
     const torch::Tensor kh) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     // Retrieve the device index, then set the corresponding device and stream.
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
@@ -1107,6 +1134,9 @@ __global__ void mont_sub_cuda_kernel(
 template<typename scalar_t>
 void reduce_2q_cuda_typed(torch::Tensor a, const torch::Tensor _2q) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
     auto stream = at::cuda::getCurrentCUDAStream(device_id);
@@ -1126,6 +1156,9 @@ void reduce_2q_cuda_typed(torch::Tensor a, const torch::Tensor _2q) {
 template<typename scalar_t>
 void make_signed_cuda_typed(torch::Tensor a, const torch::Tensor _2q) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
     auto stream = at::cuda::getCurrentCUDAStream(device_id);
@@ -1145,6 +1178,9 @@ void make_signed_cuda_typed(torch::Tensor a, const torch::Tensor _2q) {
 template<typename scalar_t>
 void tile_unsigned_cuda_typed(const torch::Tensor a, torch::Tensor dst, const torch::Tensor _2q) {
     
+    // Check for empty tensors (check output buffer size which depends on _2q)
+    if (_2q.numel() == 0) return;
+
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
     auto stream = at::cuda::getCurrentCUDAStream(device_id);
@@ -1165,6 +1201,9 @@ void tile_unsigned_cuda_typed(const torch::Tensor a, torch::Tensor dst, const to
 template<typename scalar_t>
 void make_unsigned_cuda_typed(torch::Tensor a, const torch::Tensor _2q) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
     auto stream = at::cuda::getCurrentCUDAStream(device_id);
@@ -1188,6 +1227,9 @@ void mont_add_cuda_typed(
     torch::Tensor c,
     const torch::Tensor _2q) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
     auto stream = at::cuda::getCurrentCUDAStream(device_id);
@@ -1213,6 +1255,9 @@ void mont_sub_cuda_typed(
     torch::Tensor c,
     const torch::Tensor _2q) {
     
+    // Check for empty tensors
+    if (a.numel() == 0) return;
+
     auto device_id = a.device().index();
     cudaSetDevice(device_id);
     auto stream = at::cuda::getCurrentCUDAStream(device_id);

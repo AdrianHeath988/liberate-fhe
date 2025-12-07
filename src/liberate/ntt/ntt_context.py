@@ -508,15 +508,15 @@ class ntt_context:
             q_prepack = []
             for lvl in range(self.num_levels):
                 stst = self.start_stop(lvl, mult_type)
-                mont_prepack.append([self.mont_pack(*stst)])
-                ntt_prepack.append([self.ntt_pack(*stst)])
-                intt_prepack.append([self.intt_pack(*stst)])
-                Rs_prepack.append([self.param_pack(self.Rs, *stst)])
+                mont_prepack.append([self.mont_pack(*stst, remove_empty=False)])
+                ntt_prepack.append([self.ntt_pack(*stst, remove_empty=False)])
+                intt_prepack.append([self.intt_pack(*stst, remove_empty=False)])
+                Rs_prepack.append([self.param_pack(self.Rs, *stst, remove_empty=False)])
                 Rs_scale_prepack.append(
-                    [self.param_pack(self.Rs_scale, *stst)]
+                    [self.param_pack(self.Rs_scale, *stst, remove_empty=False)]
                 )
-                _2q_prepack.append([self.param_pack(self._2q, *stst)])
-                q_prepack.append([self.param_pack(self.qlists, *stst)])
+                _2q_prepack.append([self.param_pack(self._2q, *stst, remove_empty=False)])
+                q_prepack.append([self.param_pack(self.qlists, *stst, remove_empty=False)])
             self.mont_prepack.append(mont_prepack)
             self.ntt_prepack.append(ntt_prepack)
             self.intt_prepack.append(intt_prepack)

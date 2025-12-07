@@ -148,13 +148,17 @@ class ckks_engine:
     def leveled_devices(self):
         self.len_devices = []
         for level in range(self.num_levels):
-            self.len_devices.append(len([[a] for a in self.ntt.p.p[level] if len(a) > 0]))
+            # [FIX] Force len_devices to always be num_devices. 
+            # This ensures rescale produces a list of tensors for ALL devices 
+            # (creating empty placeholders for inactive ones), maintaining alignment 
+            # with the C++ backend's expectations.
+            self.len_devices.append(self.ntt.num_devices)
 
         self.neighbor_devices = []
         for level in range(self.num_levels):
             self.neighbor_devices.append([])
-            len_devices_at = self.len_devices[level]
-            available_devices_ids = range(len_devices_at)
+            # [FIX] Iterate over all devices, not just the filtered count
+            available_devices_ids = range(self.ntt.num_devices)
             for src_device_id in available_devices_ids:
                 neighbor_devices_at = [
                     device_id for device_id in available_devices_ids if device_id != src_device_id
