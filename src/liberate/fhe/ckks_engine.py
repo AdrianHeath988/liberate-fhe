@@ -1795,6 +1795,27 @@ class ckks_engine:
             hash=self.hash,
             version=self.version
         )
+
+
+    def force_deplete(self, ct: data_struct):
+        target_index = self.num_levels - 1
+        
+        while ct.level < target_index:
+            ct = self.rescale(ct)
+            
+        print(f"Ciphertext depleted to level: {ct.level}")
+        return ct
+    @errors.log_error
+    def modup(self, ct: data_struct, target_level: int):
+        """Exposes the bootstrapping ModUp operation."""
+        if not hasattr(self, "bootstrap_ctx") or self.bootstrap_ctx is None:
+            from .bootstrapping.bootstrapping_context import BootstrappingContext
+            self.bootstrap_ctx = BootstrappingContext(self)
+        
+        if(ct.level < self.num_levels -1):
+            print(f"[Warning] ModUp called on ciphertext at level {ct.level}, which is below max level {self.num_levels -1}. Proceeding with ModUp anyway. Use force_deplete() to rescale to max level first.")
+
+        return self.bootstrap_ctx.modup(ct, target_level)
     
     @errors.log_error
     def ctos(self, ct: data_struct, galk: data_struct):

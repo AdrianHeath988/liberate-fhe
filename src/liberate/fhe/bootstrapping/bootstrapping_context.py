@@ -150,6 +150,50 @@ class BootstrappingContext:
 
         return final_sum
 
+    def modup(self, ct, target_level = 0):
+        """
+        Modulus Raising (ModUp).
+        Transitions ciphertext from current modulus q to a larger modulus Q.
+        """
+        print(f"[BootstrappingContext] Starting ModUp from level {ct.level} to {target_level}...")
+        
+        # 1. Transform to Coefficient Form (INTT)
+        # We clone to preserve the original if needed, then exit NTT domain
+        ct_coeff = self.engine.clone(ct)
+        self.engine.ntt.intt_exit_reduce(ct_coeff.data[0], ct_coeff.level)
+        self.engine.ntt.intt_exit_reduce(ct_coeff.data[1], ct_coeff.level)
+
+        # 2. Basis Extension (Lifting to the target level)
+        # We utilize the library's internal basis extension logic to reduce 
+        # coefficients against the target level's RNS primes.
+        # This mirrors engine.extend logic
+        new_ct0 = []
+        new_ct1 = []
+
+        for device_id in range(self.engine.ntt.num_devices):
+            # Lift coefficients to the extended basis at target_level
+            # Note: The 'mod_raise_kernel' approach can be used if bound
+            # Here we follow the Python-side partition logic
+            part0 = self.engine.extend(ct_coeff.data[0], device_id, ct_coeff.level, 0, target_level)
+            part1 = self.engine.extend(ct_coeff.data[1], device_id, ct_coeff.level, 0, target_level)
+            
+            new_ct0.append(part0)
+            new_ct1.append(part1)
+
+        # 3. Transform back to Evaluation Domain (NTT) at the new modulus
+        self.engine.ntt.enter_ntt(new_ct0, target_level)
+        self.engine.ntt.enter_ntt(new_ct1, target_level)
+
+        # 4. Construct updated data_struct
+        extended_ct = ct_coeff._replace(
+            data=(new_ct0, new_ct1),
+            level=target_level,
+            ntt_state=True,
+            montgomery_state=True
+        )
+
+        return extended_ct
+
     def ctos(self, ct, galk):
         """
         Ciphertext-to-Slot (Homomorphic Decode).
