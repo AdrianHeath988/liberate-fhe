@@ -167,6 +167,21 @@ class BootstrappingContext:
         acc0 = [None] * num_devices
         acc1 = [None] * num_devices
 
+        # Helper to align single tensor to device list
+        def align(tensor, dev_idx):
+            l = []
+            for i in range(num_devices):
+                if i == dev_idx:
+                    l.append(tensor)
+                else:
+                    # Create empty tensor with 0 elements but valid dimension for safety
+                    # Check dimension to match packed_accessor requirements (1D for scalars, 2D for coeffs)
+                    if tensor.dim() == 1:
+                        l.append(torch.empty(0, device=self.engine.ntt.devices[i], dtype=tensor.dtype))
+                    else:
+                        l.append(torch.empty(0, 0, device=self.engine.ntt.devices[i], dtype=tensor.dtype))
+            return l
+
         # Iterate over all source devices
         for src_device in range(num_devices):
             parts = self.engine.ntt.p.p[ct.level][src_device]
@@ -196,18 +211,23 @@ class BootstrappingContext:
                     ext1 = s1[0].repeat(rns_len, 1)
                     
                     # Enter Montgomery at TARGET level
-                    # FIX: Use mont_enter_scalar with ones to force correct vector sizes.
-                    # This bypasses potential size mismatches in Rs_prepack.
-                    ones0 = torch.ones_like(ext0)
-                    ones1 = torch.ones_like(ext1)
+                    # Retrieve the correct Rs (R^2) tensor for this device/level/mult_type
+                    # Rs_prepack[dst][lvl][-2] is a LIST. We take the single tensor inside.
+                    rs_list = self.engine.ntt.Rs_prepack[dst_device][target_level][-2]
+                    rs_tensor = rs_list[0]
                     
-                    self.engine.ntt.mont_enter_scalar([ext0], [ones0], target_level, dst_device, -2)
-                    self.engine.ntt.mont_enter_scalar([ext1], [ones1], target_level, dst_device, -2)
+                    # Align inputs to device lists
+                    ext0_aligned = align(ext0, dst_device)
+                    ext1_aligned = align(ext1, dst_device)
+                    rs_aligned = align(rs_tensor, dst_device)
+
+                    self.engine.ntt.mont_enter_scalar(ext0_aligned, rs_aligned, target_level, dst_device, -2)
+                    self.engine.ntt.mont_enter_scalar(ext1_aligned, rs_aligned, target_level, dst_device, -2)
                     
                     # Add Corrections (L_enter)
                     L_enter_list = pack['L_enter'][dst_device]
                     
-                    if L_enter_list[0] is not None:
+                    if L_enter_list is not None:
                          alpha = len(s0)
                          start = self.engine.ntt.starts[target_level][dst_device]
                          
@@ -215,23 +235,42 @@ class BootstrappingContext:
                              Y0 = s0[i+1].repeat(rns_len, 1)
                              Y1 = s1[i+1].repeat(rns_len, 1)
                              
-                             Li = [L_enter_list[i][start:]]
+                             Y0_aligned = align(Y0, dst_device)
+                             Y1_aligned = align(Y1, dst_device)
                              
-                             self.engine.ntt.mont_enter_scalar([Y0], Li, target_level, dst_device, -2)
-                             self.engine.ntt.mont_enter_scalar([Y1], Li, target_level, dst_device, -2)
+                             # Extract and align correction tensor
+                             Li_tensor = L_enter_list[i][start:]
+                             Li_aligned = align(Li_tensor, dst_device)
                              
-                             ext0 = self.engine.ntt.mont_add([ext0], [Y0], target_level, dst_device, -2)[0]
-                             ext1 = self.engine.ntt.mont_add([ext1], [Y1], target_level, dst_device, -2)[0]
+                             self.engine.ntt.mont_enter_scalar(Y0_aligned, Li_aligned, target_level, dst_device, -2)
+                             self.engine.ntt.mont_enter_scalar(Y1_aligned, Li_aligned, target_level, dst_device, -2)
+                             
+                             res0 = self.engine.ntt.mont_add(ext0_aligned, Y0_aligned, target_level, dst_device, -2)
+                             res1 = self.engine.ntt.mont_add(ext1_aligned, Y1_aligned, target_level, dst_device, -2)
+                             
+                             ext0_aligned = res0
+                             ext1_aligned = res1
+                             
+                             ext0 = ext0_aligned[dst_device]
+                             ext1 = ext1_aligned[dst_device]
 
                     # Accumulate
                     if acc0[dst_device] is None:
                         acc0[dst_device] = ext0
                         acc1[dst_device] = ext1
                     else:
-                        res0 = self.engine.ntt.mont_add([acc0[dst_device]], [ext0], target_level, dst_device, -2)
-                        res1 = self.engine.ntt.mont_add([acc1[dst_device]], [ext1], target_level, dst_device, -2)
-                        acc0[dst_device] = res0[0]
-                        acc1[dst_device] = res1[0]
+                        # Re-align because acc is just a tensor
+                        ext0_aligned = align(ext0, dst_device)
+                        ext1_aligned = align(ext1, dst_device)
+                        
+                        acc0_aligned = align(acc0[dst_device], dst_device)
+                        acc1_aligned = align(acc1[dst_device], dst_device)
+
+                        res0 = self.engine.ntt.mont_add(acc0_aligned, ext0_aligned, target_level, dst_device, -2)
+                        res1 = self.engine.ntt.mont_add(acc1_aligned, ext1_aligned, target_level, dst_device, -2)
+                        
+                        acc0[dst_device] = res0[dst_device]
+                        acc1[dst_device] = res1[dst_device]
 
         # 3. Finalize
         new_ct0_list = []
