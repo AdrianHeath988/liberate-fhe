@@ -164,3 +164,21 @@ class BootstrappingContext:
         result = self.bsgs_linear_transform(ct, diags, galk, ct.level)
         
         return result
+
+    def stoc(self, ct, galk):
+        """
+        Slot-to-Coeff (Homomorphic Encode).
+        Performs the forward DFT to pack coefficients back into the canonical embedding slots.
+        """
+        print("[BootstrappingContext] Starting STOC (BSGS)...")
+        
+        # 1. Generate Diagonals for Forward DFT
+        # We use inverse=False to get the standard DFT matrix
+        N = self.ctx.N // 2
+        diags = self.generate_dft_diagonals(N, inverse=False)
+        
+        # 2. Apply Linear Transform using the existing BSGS infrastructure
+        # The linear transform logic is symmetric for any square matrix (DFT/IDFT)
+        result = self.bsgs_linear_transform(ct, diags, galk, ct.level)
+        
+        return result

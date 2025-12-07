@@ -1,6 +1,6 @@
 import numpy as np
 from collections import namedtuple
-
+import time
 
 from liberate.fhe.ckks_engine import ckks_engine
 from liberate.fhe.context.ckks_context import ckks_context
@@ -18,7 +18,7 @@ def test_ctos():
     ctx_params = {
         "buffer_bit_length":62,
         "scale_bits":40,
-        "logN":15,
+        "logN":14,
         "num_scales":None,
         "num_special_primes":2,
         "sigma":3.2,
@@ -30,7 +30,7 @@ def test_ctos():
         "read_cache":True,
         "save_cache":True,
         "verbose":True, 
-        "devices": [0,1,2,3],
+        "devices": [0,1],
     }
     params = presets.params["silver"]
     print(params)
@@ -45,6 +45,7 @@ def test_ctos():
 
 
     test_message = engine.example()
+    print(f"Test message: {test_message}")
     level = 0
 
     pt = engine.encode(m=test_message, level=level)
@@ -52,12 +53,15 @@ def test_ctos():
 
 
     print("--- Executing CTOS ---")
+    start_time = time.perf_counter()
     p = engine.ctos(ct=ct, galk=galk)
-
+    end_ct = engine.stoc(ct=p, galk=galk)
+    end_time = time.perf_counter()
+    print(f"execution time: {end_time - start_time} seconds")
 
     pt_dec = engine.decrypt(ct=ct, sk=secret_key)
     test_message_dec = engine.decode(m=pt_dec, level=level)
-    
+    print(f"Decrypted original message: {test_message_dec}")
     print("Test Complete.")
 
 if __name__ == "__main__":

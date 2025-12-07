@@ -1811,6 +1811,20 @@ class ckks_engine:
         # Call the Python implementation
         return self.bootstrap_ctx.ctos(ct, galk)
 
+    @errors.log_error
+    def stoc(self, ct: data_struct, galk: data_struct):
+        # Pass 'self' (the engine) so BootstrappingContext can use engine.rotate_single
+        print("[Info] Starting STOC operation in ckks_engine.py")
+
+        # Lazy-create a bootstrapping context if it doesn't exist
+        if not hasattr(self, "bootstrap_ctx") or self.bootstrap_ctx is None:
+            from .bootstrapping.bootstrapping_context import BootstrappingContext
+            self.bootstrap_ctx = BootstrappingContext(self, verbose=self.ntt.verbose if hasattr(self.ntt, 'verbose') else False)
+
+        print("[Info] Executing BSGS STOC")
+        # Call the Python implementation in the context
+        return self.bootstrap_ctx.stoc(ct, galk)
+
     # -------------------------------------------------------------------------------------------
     # Clone.
     # -------------------------------------------------------------------------------------------
