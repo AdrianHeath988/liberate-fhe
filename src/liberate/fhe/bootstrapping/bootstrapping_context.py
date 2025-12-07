@@ -167,20 +167,12 @@ class BootstrappingContext:
         acc0 = [None] * num_devices
         acc1 = [None] * num_devices
 
-        # Helper to align single tensor to device list
+        # [FIX] Redefined align to return a single-element list.
+        # The C++ backend iterates based on input size. Since we are using 
+        # device-specific parameters (by passing dst_device as mult_type),
+        # the parameter lists have size 1. Our input must also have size 1.
         def align(tensor, dev_idx):
-            l = []
-            for i in range(num_devices):
-                if i == dev_idx:
-                    l.append(tensor)
-                else:
-                    # Create empty tensor with 0 elements but valid dimension for safety
-                    # Check dimension to match packed_accessor requirements (1D for scalars, 2D for coeffs)
-                    if tensor.dim() == 1:
-                        l.append(torch.empty(0, device=self.engine.ntt.devices[i], dtype=tensor.dtype))
-                    else:
-                        l.append(torch.empty(0, 0, device=self.engine.ntt.devices[i], dtype=tensor.dtype))
-            return l
+            return [tensor]
 
         # Iterate over all source devices
         for src_device in range(num_devices):
@@ -211,12 +203,10 @@ class BootstrappingContext:
                     ext1 = s1[0].repeat(rns_len, 1)
                     
                     # Enter Montgomery at TARGET level
-                    # Retrieve the correct Rs (R^2) tensor for this device/level/mult_type
-                    # Rs_prepack[dst][lvl][-2] is a LIST. We take the single tensor inside.
                     rs_list = self.engine.ntt.Rs_prepack[dst_device][target_level][-2]
                     rs_tensor = rs_list[0]
                     
-                    # Align inputs to device lists
+                    # Align inputs (Now returns lists of length 1)
                     ext0_aligned = align(ext0, dst_device)
                     ext1_aligned = align(ext1, dst_device)
                     rs_aligned = align(rs_tensor, dst_device)
@@ -251,15 +241,15 @@ class BootstrappingContext:
                              ext0_aligned = res0
                              ext1_aligned = res1
                              
-                             ext0 = ext0_aligned[dst_device]
-                             ext1 = ext1_aligned[dst_device]
+                             # [FIX] Access index 0, as list size is now 1
+                             ext0 = ext0_aligned[0]
+                             ext1 = ext1_aligned[0]
 
                     # Accumulate
                     if acc0[dst_device] is None:
                         acc0[dst_device] = ext0
                         acc1[dst_device] = ext1
                     else:
-                        # Re-align because acc is just a tensor
                         ext0_aligned = align(ext0, dst_device)
                         ext1_aligned = align(ext1, dst_device)
                         
@@ -269,8 +259,9 @@ class BootstrappingContext:
                         res0 = self.engine.ntt.mont_add(acc0_aligned, ext0_aligned, target_level, dst_device, -2)
                         res1 = self.engine.ntt.mont_add(acc1_aligned, ext1_aligned, target_level, dst_device, -2)
                         
-                        acc0[dst_device] = res0[dst_device]
-                        acc1[dst_device] = res1[dst_device]
+                        # [FIX] Access index 0
+                        acc0[dst_device] = res0[0]
+                        acc1[dst_device] = res1[0]
 
         # 3. Finalize
         new_ct0_list = []
