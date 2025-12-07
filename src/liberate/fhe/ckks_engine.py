@@ -1846,6 +1846,57 @@ class ckks_engine:
         # Call the Python implementation in the context
         return self.bootstrap_ctx.stoc(ct, galk)
 
+    @errors.log_error
+    def eval_mod(self, ct: data_struct, degree: int, evk: data_struct, q_boot: float = None):
+        """
+        Performs the EvalMod step of bootstrapping using a Taylor expansion.
+        """
+        if not hasattr(self, "bootstrap_ctx") or self.bootstrap_ctx is None:
+            from .bootstrapping.bootstrapping_context import BootstrappingContext
+            self.bootstrap_ctx = BootstrappingContext(self)
+            
+        return self.bootstrap_ctx.eval_taylor_mod(ct, degree, evk, q_boot)
+
+    @errors.log_error
+    def bootstrap(self, ct: data_struct, galk: data_struct, evk: data_struct, 
+                  degree: int = 7, target_level: int = 0):
+        print(f"[ckks_engine] Starting Bootstrapping (Level {ct.level} -> {target_level})...")
+
+        # 0. Determine q_boot (The modulus of the input ciphertext)
+        # We need this to define the period of the sine function in EvalMod.
+        # q_boot = product(primes at ct.level)
+        # We grab the primes from device 0's allocation for this level.
+        # Note: In a distributed setting, the full modulus is the union of all parts,
+        # but typically RNS channels are consistent across devices or sufficient 
+        # to calculate the magnitude. Here we assume standard RNS composition.
+        
+        # Access partitioning to find prime indices for this level
+        prime_indices = self.ntt.p.destination_arrays[ct.level][0] # Device 0
+        current_primes = [self.ctx.q[i] for i in prime_indices]
+        q_boot = math.prod(current_primes)
+        
+        print(f"[ckks_engine] Bootstrapping Modulus q_boot determined: ~2^{math.log2(q_boot):.1f}")
+
+        # 1. ModUp: Lift from q to Q
+        # Input: ct (mod q) -> Output: ct_lifted (mod Q)
+        ct_lifted = self.modup(ct, target_level)
+        
+        # 2. CTOS: Coeff to Slot
+        # Moves coefficients into the message slots so we can operate on them.
+        ct_slots = self.ctos(ct_lifted, galk)
+        
+        # 3. EvalMod: Modular Reduction
+        # Computes approx(x mod q) to remove the k*q error introduced by ModUp.
+        # We pass q_boot so the sine function is scaled correctly.
+        ct_reduced = self.eval_mod(ct_slots, degree, evk, q_boot=q_boot)
+        
+        # 4. STOC: Slot to Coeff
+        # Moves the "clean" message back into the coefficient representation.
+        ct_refreshed = self.stoc(ct_reduced, galk)
+        
+        print(f"[ckks_engine] Bootstrapping complete. Output Level: {ct_refreshed.level}")
+        return ct_refreshed
+        
     # -------------------------------------------------------------------------------------------
     # Clone.
     # -------------------------------------------------------------------------------------------

@@ -39,28 +39,28 @@ def test_ctos():
     
     secret_key = engine.create_secret_key()
     public_key = engine.create_public_key(sk=secret_key)
-
+    evk = engine.create_evk(secret_key)
     print("--- Generating Bootstrapping Keys ---")
     galk = engine.create_bootstrapping_keys(sk=secret_key)
 
 
     test_message = engine.example()
     print(f"Test message: {test_message}")
-    level = 0
 
-    pt = engine.encode(m=test_message, level=level)
-    ct = engine.encrypt(pt=pt, pk=public_key, level=level)
+    depleted_level = engine.num_levels - 1
+    print(f"Encrypting directly at depleted level: {depleted_level}")
 
+    pt = engine.encode(m=test_message, level=depleted_level)
+    ct = engine.encrypt(pt=pt, pk=public_key, level=depleted_level)
 
-    print("--- Executing CTOS ---")
+    print("--- Executing bootstrap ---")
     start_time = time.perf_counter()
-    p = engine.ctos(ct=ct, galk=galk)
-    end_ct = engine.stoc(ct=p, galk=galk)
+    refreshed = engine.bootstrap(ct=ct, galk=galk, evk=evk)
     end_time = time.perf_counter()
-    print(f"execution time: {end_time - start_time} seconds")
+    print(f"Execution time: {end_time - start_time:.4f} seconds")
 
-    pt_dec = engine.decrypt(ct=ct, sk=secret_key)
-    test_message_dec = engine.decode(m=pt_dec, level=level)
+    pt_dec = engine.decrypt(ct=refreshed, sk=secret_key)
+    test_message_dec = engine.decode(m=pt_dec, level=refreshed.level)
     print(f"Decrypted original message: {test_message_dec}")
     print("Test Complete.")
 

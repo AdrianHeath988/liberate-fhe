@@ -150,46 +150,108 @@ class BootstrappingContext:
 
         return final_sum
 
-    def modup(self, ct, target_level = 0):
+    def modup(self, ct, target_level=0):
         """
         Modulus Raising (ModUp).
-        Transitions ciphertext from current modulus q to a larger modulus Q.
+        Transitions ciphertext from current modulus q to a larger modulus Q (Level 0).
         """
         print(f"[BootstrappingContext] Starting ModUp from level {ct.level} to {target_level}...")
         
         # 1. Transform to Coefficient Form (INTT)
-        # We clone to preserve the original if needed, then exit NTT domain
         ct_coeff = self.engine.clone(ct)
         self.engine.ntt.intt_exit_reduce(ct_coeff.data[0], ct_coeff.level)
         self.engine.ntt.intt_exit_reduce(ct_coeff.data[1], ct_coeff.level)
 
-        # 2. Basis Extension (Lifting to the target level)
-        # We utilize the library's internal basis extension logic to reduce 
-        # coefficients against the target level's RNS primes.
-        # This mirrors engine.extend logic
-        new_ct0 = []
-        new_ct1 = []
+        # 2. Basis Extension (Lifting to Level 0)
+        num_devices = self.engine.ntt.num_devices
+        acc0 = [None] * num_devices
+        acc1 = [None] * num_devices
 
-        for device_id in range(self.engine.ntt.num_devices):
-            # Lift coefficients to the extended basis at target_level
-            # Note: The 'mod_raise_kernel' approach can be used if bound
-            # Here we follow the Python-side partition logic
-            part0 = self.engine.extend(ct_coeff.data[0], device_id, ct_coeff.level, 0, target_level)
-            part1 = self.engine.extend(ct_coeff.data[1], device_id, ct_coeff.level, 0, target_level)
+        # Iterate over all source devices
+        for src_device in range(num_devices):
+            parts = self.engine.ntt.p.p[ct.level][src_device]
             
-            new_ct0.append(part0)
-            new_ct1.append(part1)
+            for part_id in range(len(parts)):
+                # A. Pre-computation
+                state0 = self.engine.pre_extend(ct_coeff.data[0], src_device, ct.level, part_id, exit_ntt=False)
+                state1 = self.engine.pre_extend(ct_coeff.data[1], src_device, ct.level, part_id, exit_ntt=False)
+                
+                part_range = tuple(parts[part_id])
+                pack = self.engine.ntt.parts_pack[src_device][part_range]
+                
+                # B. Extend to all target devices
+                for dst_device in range(num_devices):
+                    if src_device != dst_device:
+                        s0 = state0.to(self.engine.ntt.devices[dst_device])
+                        s1 = state1.to(self.engine.ntt.devices[dst_device])
+                    else:
+                        s0 = state0
+                        s1 = state1
+                    
+                    # --- Custom Extension Logic ---
+                    rns_len = len(self.engine.ntt.p.destination_arrays_with_special[target_level][dst_device])
+                    
+                    # Replicate state
+                    ext0 = s0[0].repeat(rns_len, 1)
+                    ext1 = s1[0].repeat(rns_len, 1)
+                    
+                    # Enter Montgomery at TARGET level
+                    # FIX: Use mont_enter_scalar with ones to force correct vector sizes.
+                    # This bypasses potential size mismatches in Rs_prepack.
+                    ones0 = torch.ones_like(ext0)
+                    ones1 = torch.ones_like(ext1)
+                    
+                    self.engine.ntt.mont_enter_scalar([ext0], [ones0], target_level, dst_device, -2)
+                    self.engine.ntt.mont_enter_scalar([ext1], [ones1], target_level, dst_device, -2)
+                    
+                    # Add Corrections (L_enter)
+                    L_enter_list = pack['L_enter'][dst_device]
+                    
+                    if L_enter_list[0] is not None:
+                         alpha = len(s0)
+                         start = self.engine.ntt.starts[target_level][dst_device]
+                         
+                         for i in range(alpha - 1):
+                             Y0 = s0[i+1].repeat(rns_len, 1)
+                             Y1 = s1[i+1].repeat(rns_len, 1)
+                             
+                             Li = [L_enter_list[i][start:]]
+                             
+                             self.engine.ntt.mont_enter_scalar([Y0], Li, target_level, dst_device, -2)
+                             self.engine.ntt.mont_enter_scalar([Y1], Li, target_level, dst_device, -2)
+                             
+                             ext0 = self.engine.ntt.mont_add([ext0], [Y0], target_level, dst_device, -2)[0]
+                             ext1 = self.engine.ntt.mont_add([ext1], [Y1], target_level, dst_device, -2)[0]
 
-        # 3. Transform back to Evaluation Domain (NTT) at the new modulus
-        self.engine.ntt.enter_ntt(new_ct0, target_level)
-        self.engine.ntt.enter_ntt(new_ct1, target_level)
+                    # Accumulate
+                    if acc0[dst_device] is None:
+                        acc0[dst_device] = ext0
+                        acc1[dst_device] = ext1
+                    else:
+                        res0 = self.engine.ntt.mont_add([acc0[dst_device]], [ext0], target_level, dst_device, -2)
+                        res1 = self.engine.ntt.mont_add([acc1[dst_device]], [ext1], target_level, dst_device, -2)
+                        acc0[dst_device] = res0[0]
+                        acc1[dst_device] = res1[0]
 
-        # 4. Construct updated data_struct
+        # 3. Finalize
+        new_ct0_list = []
+        new_ct1_list = []
+        
+        for device_id in range(num_devices):
+            if acc0[device_id] is None:
+                raise RuntimeError(f"Device {device_id} received no data during ModUp.")
+            new_ct0_list.append(acc0[device_id])
+            new_ct1_list.append(acc1[device_id])
+
+        self.engine.ntt.ntt(new_ct0_list, target_level, mult_type=-2)
+        self.engine.ntt.ntt(new_ct1_list, target_level, mult_type=-2)
+
         extended_ct = ct_coeff._replace(
-            data=(new_ct0, new_ct1),
+            data=(new_ct0_list, new_ct1_list),
             level=target_level,
             ntt_state=True,
-            montgomery_state=True
+            montgomery_state=True,
+            include_special=True
         )
 
         return extended_ct
@@ -225,4 +287,65 @@ class BootstrappingContext:
         # The linear transform logic is symmetric for any square matrix (DFT/IDFT)
         result = self.bsgs_linear_transform(ct, diags, galk, ct.level)
         
+        return result
+
+    def eval_taylor_mod(self, ct, degree, evk, q_boot=None):
+        """
+        Homomorphic Modular Reduction using Taylor Expansion of Sine.
+        Approximates f(x) = (q/2pi) * sin(2pi * x / q) to remove q*I error.
+        
+        Args:
+            ct: The ciphertext (usually output of CTOS).
+            degree: The degree of the Taylor expansion (should be odd).
+            evk: Evaluation key (needed for multiplication).
+            q_boot: The modulus q corresponding to the bootstrapping level (period).
+                    If None, defaults to the engine's scale (assuming scale ~ q).
+        """
+        print(f"[BootstrappingContext] Starting Taylor EvalMod (degree={degree})...")
+        
+        if q_boot is None:
+            q_boot = self.engine.ctx.q[self.engine.num_levels - 1]
+
+        # Pre-calculate constants
+        two_pi_over_q = 2 * math.pi / q_boot
+        
+        # Taylor series for (q/2pi) * sin(u) where u = (2pi/q) * x
+        # coeff_k = (q/2pi) * (-1)^k / (2k+1)! * (2pi/q)^(2k+1)
+        #         = (-1)^k / (2k+1)! * (2pi/q)^(2k)
+        
+        # We accumulate the result: result = sum(coeff_i * x^i)
+        # Optimized: calculate powers of x iteratively to save levels if possible,
+        # but for simplicity and utilizing engine features, we compute powers directly.
+        
+        # 1. First term (k=0): x
+        # coeff = 1.0
+        result = ct # Copy not strictly needed if we don't modify in place immediately, but engine operations usually return new
+        
+        # We need x^2 to step up powers (x, x^3, x^5...)
+        if degree >= 3:
+            # Calculate x^2
+            x2 = self.engine.square(ct, evk)
+            
+            # Current power x^p starts at x^1
+            current_pow = ct
+            
+            # Loop for k = 1, 2, ...
+            # Terms: x^3, x^5, ...
+            for d in range(3, degree + 1, 2):
+                k = (d - 1) // 2
+                
+                # Update power: x^d = x^{d-2} * x^2
+                current_pow = self.engine.mult(current_pow, x2, evk)
+                
+                # Calculate coefficient
+                # coeff = (-1)^k * (1/(2k+1)!) * (2pi/q)^(2k)
+                factorial_val = math.factorial(d)
+                ratio = (two_pi_over_q ** (d - 1)) # Note: formula simplification resulted in (2pi/q)^(2k)
+                
+                coeff = ((-1)**k) * (1.0 / factorial_val) * ratio
+                
+                # Add term: coeff * x^d
+                term = self.engine.mult_scalar(current_pow, coeff)
+                result = self.engine.add(result, term)
+                
         return result
