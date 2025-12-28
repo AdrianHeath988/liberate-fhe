@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.cuda.nccl as nccl
 
 #  from context.ckks_context import ckks_context
 from .context.ckks_context import ckks_context
@@ -759,114 +760,88 @@ class ckks_engine:
         num_parts = sum([len(alloc) for alloc in ksk_alloc])
         part_results = [
             [
-                [[] for _ in range(len_devices)],
-                [[] for _ in range(len_devices)]
-            ]
-                       for _ in range(num_parts)
+                [None for _ in range(len_devices)],
+                [None for _ in range(len_devices)]
+            ] for _ in range(num_parts)
         ]
         
-        # 1. Generate states.
+        # 1. Generate states locally.
         states = [[] for _ in range(num_parts)]
         for src_device_id in range(len_devices):
             for part_id in range(len(self.ntt.p.p[level][src_device_id])):
                 storage_id = self.stor_ids[level][src_device_id][part_id]
-                state = self.pre_extend(
-                    a,
-                    src_device_id,
-                    level,
-                    part_id,
-                    exit_ntt
-                )
+                state = self.pre_extend(a, src_device_id, level, part_id, exit_ntt)
                 states[storage_id] = state
-        
-        # 2. Copy to CPU.
-        CPU_states = [[] for _ in range(num_parts)]
-        for src_device_id in range(len_devices):
-            for part_id, part in enumerate(self.ntt.p.p[level][src_device_id]):
-                storage_id = self.stor_ids[level][src_device_id][part_id]
-                alpha = len(part)
-                # Need to verify if ksk_buffers structure matches this access pattern
-                # Assuming ksk_buffers is [device_id][part_id]
-                CPU_state = self.ksk_buffers[src_device_id][part_id][:alpha]                
-                CPU_state.copy_(states[storage_id], non_blocking=True)
-                CPU_states[storage_id] = CPU_state
-                
-        # 3. Continue on with the follow ups on source devices.
+
+        # ---------------------------------------------------------
+        # NEW: NCCL P2P Broadcast
+        # ---------------------------------------------------------
+        import torch.cuda.nccl as nccl
+        distributed_states = {}
+
         for src_device_id in range(len_devices):
             for part_id in range(len(self.ntt.p.p[level][src_device_id])):
                 storage_id = self.stor_ids[level][src_device_id][part_id]
-                state = states[storage_id]
-                d0, d1 = self.switcher_later_part(state, ksk,
-                                               src_device_id,
-                                               src_device_id,
-                                               level, part_id)
+                src_tensor = states[storage_id]
+                
+                # Prepare the list of tensors for NCCL
+                nccl_tensor_list = [None] * len_devices
+                nccl_tensor_list[src_device_id] = src_tensor
+                
+                for dst_dev_id in range(len_devices):
+                    if dst_dev_id != src_device_id:
+                        # [FIX] Explicitly allocate on the target device
+                        dst_tensor = torch.empty_like(
+                            src_tensor, 
+                            device=self.ntt.devices[dst_dev_id]
+                        )
+                        nccl_tensor_list[dst_dev_id] = dst_tensor
 
+                # Execute NCCL Broadcast
+                nccl.broadcast(nccl_tensor_list, root=src_device_id)
+
+                # Store results
+                for dst_dev_id in range(len_devices):
+                    if dst_dev_id != src_device_id:
+                        distributed_states[(storage_id, dst_dev_id)] = nccl_tensor_list[dst_dev_id]
+
+        torch.cuda.synchronize()
+        
+        # 3. Process Source Devices
+        for src_device_id in range(len_devices):
+            for part_id in range(len(self.ntt.p.p[level][src_device_id])):
+                storage_id = self.stor_ids[level][src_device_id][part_id]
+                d0, d1 = self.switcher_later_part(states[storage_id], ksk, src_device_id, src_device_id, level, part_id)
                 part_results[storage_id][0][src_device_id] = d0
                 part_results[storage_id][1][src_device_id] = d1
         
-        # 4. Copy onto neighbor GPUs the states.
-        # [FIX] Use a dictionary to store states per (storage_id, dst_device_id)
-        # to prevent overwriting when multiple neighbors exist.
-        CUDA_states = {} 
-        
+        # 6. Process Neighbor Devices (using distributed_states)
         for src_device_id in range(len_devices):
-            for j, dst_device_id in enumerate(
-                    neighbor_devices[src_device_id]):           
-                for part_id, part in enumerate(self.ntt.p.p[level][src_device_id]):
-                    storage_id = self.stor_ids[level][src_device_id][part_id]
-                    CPU_state = CPU_states[storage_id]
-                    
-                    # Store with unique key
-                    CUDA_states[(storage_id, dst_device_id)] = CPU_state.cuda(
-                        self.ntt.devices[dst_device_id], non_blocking=True)
-                    
-        # 5. Synchronize.
-        torch.cuda.synchronize()
-        
-        # 6. Do follow ups on neighbors.
-        for src_device_id in range(len_devices):
-            for j, dst_device_id in enumerate(
-                    neighbor_devices[src_device_id]):
-                for part_id, part in enumerate(self.ntt.p.p[level][src_device_id]):
+            for dst_device_id in neighbor_devices[src_device_id]:
+                for part_id in range(len(self.ntt.p.p[level][src_device_id])):
                     storage_id = self.stor_ids[level][src_device_id][part_id]
                     
-                    # [FIX] Retrieve the correct tensor for this specific destination device
-                    CUDA_state = CUDA_states[(storage_id, dst_device_id)]
+                    # Retrieve the broadcasted tensor
+                    CUDA_state = distributed_states[(storage_id, dst_device_id)]
                     
-                    d0, d1 = self.switcher_later_part(CUDA_state,
-                                           ksk,
-                                           src_device_id,
-                                           dst_device_id,
-                                           level,
-                                           part_id)
+                    d0, d1 = self.switcher_later_part(CUDA_state, ksk, src_device_id, dst_device_id, level, part_id)
                     part_results[storage_id][0][dst_device_id] = d0
                     part_results[storage_id][1][dst_device_id] = d1
                     
-        # 7. Sum up.
+        # 7. Sum up (Standard Logic)
         summed0 = part_results[0][0]
         summed1 = part_results[0][1]
         
         for i in range(1, len(part_results)):
-            summed0 = self.ntt.mont_add(
-                summed0, part_results[i][0], level, -2)
-            summed1 = self.ntt.mont_add(
-                summed1, part_results[i][1], level, -2)
+            summed0 = self.ntt.mont_add(summed0, part_results[i][0], level, -2)
+            summed1 = self.ntt.mont_add(summed1, part_results[i][1], level, -2)
             
-        # Rename summed's.
         d0 = summed0
         d1 = summed1
 
-        # intt to prepare for division by P.
         self.ntt.intt_exit_reduce(d0, level, -2)
         self.ntt.intt_exit_reduce(d1, level, -2)       
         
-        # 6. Divide by P.
-        # This is actually done in successive order.
-        # Rescale from the most outer prime channel.
-        # Start from the special len and drop channels one by one.
-
-        # Pre-montgomery enter the ordinary part.
-        # Note that special prime channels remain intact.
         c0 = [d[:-self.ntt.num_special_primes] for d in d0]
         c1 = [d[:-self.ntt.num_special_primes] for d in d1]
         
@@ -877,32 +852,19 @@ class ckks_engine:
         
         for P_ind in range(self.ntt.num_special_primes):
             PiRi = self.PiRs[level][P_ind]
-
-            # Tile.
             P0 = [d[-1-P_ind].repeat(current_len[di], 1) for di, d in enumerate(d0)]
             P1 = [d[-1-P_ind].repeat(current_len[di], 1) for di, d in enumerate(d1)]
-            
-            # mont enter only the ordinary part.
             Q0 = [d[:-self.ntt.num_special_primes] for d in P0]
             Q1 = [d[:-self.ntt.num_special_primes] for d in P1]
-            
             self.ntt.mont_enter(Q0, level, -1)
             self.ntt.mont_enter(Q1, level, -1)
-
-            # subtract P0 and P1.
-            # Note that by the consequence of the above mont_enter
-            # ordinary parts will be in montgomery form,
-            # while the special part remains plain.
             d0 = self.ntt.mont_sub(d0, P0, level, -2)
             d1 = self.ntt.mont_sub(d1, P1, level, -2)
-
             self.ntt.mont_enter_scalar(d0, PiRi, level, -2)
             self.ntt.mont_enter_scalar(d1, PiRi, level, -2)
-
             self.ntt.reduce_2q(d0, level, -1)
             self.ntt.reduce_2q(d1, level, -1)
 
-        # Carve out again, since d0 and d1 are fresh new.
         c0 = [d[:-self.ntt.num_special_primes] for d in d0]
         c1 = [d[:-self.ntt.num_special_primes] for d in d1]
         
