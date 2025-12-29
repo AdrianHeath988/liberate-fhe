@@ -7,9 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.cuda.nccl as nccl
+import torch.cuda.nccl as nccl # Added Import
 
-#  from context.ckks_context import ckks_context
 from .context.ckks_context import ckks_context
 from .data_struct import data_struct
 from .encdec import decode, encode, rotate, conjugate
@@ -24,34 +23,15 @@ class ckks_engine:
     @errors.log_error
     def __init__(self, devices: list[int] = None, verbose: bool = False,
                  bias_guard: bool = True, norm: str = 'forward', **ctx_params):
-        """
-            buffer_bit_length=62,
-            scale_bits=40,
-            logN=15,
-            num_scales=None,
-            num_special_primes=2,
-            sigma=3.2,
-            uniform_ternary_secret=True,
-            cache_folder='cache/',
-            security_bits=128,
-            quantum='post_quantum',
-            distribution='uniform',
-            read_cache=True,
-            save_cache=True,
-            verbose=False
-        """
-
+        
         self.bias_guard = bias_guard
-
         self.norm = norm
-
         self.version = VERSION
 
         self.ctx = ckks_context(**ctx_params)
         self.ntt = ntt_context(self.ctx, devices=devices, verbose=verbose)
 
         self.num_levels = self.ntt.num_levels - 1
-
         self.num_slots = self.ctx.N // 2
 
         rng_repeats = max(self.ntt.num_special_primes, 2)
@@ -65,22 +45,22 @@ class ckks_engine:
         self.hash = sha256(bytes(hashstr)).hexdigest()
 
         self.make_adjustments_and_corrections()
-
         self.device0 = self.ntt.devices[0]
-
         self.make_mont_PR()
-
         self.reserve_ksk_buffers()
-
         self.create_ksk_rescales()
-
         self.alloc_parts()
-
         self.leveled_devices()
-
         self.create_rescale_scales()
-
         self.galois_deltas = [2 ** i for i in range(self.ctx.logN - 1)]
+
+        # --- NEW: Create Persistent Communication Streams ---
+        # These are required for multi-device CUDA Graph Capture
+        self.comm_streams = []
+        for d in self.ntt.devices:
+            with torch.cuda.device(d):
+                self.comm_streams.append(torch.cuda.Stream(device=d))
+        # ----------------------------------------------------
 
         self.mult_dispatch_dict = {
             (data_struct, data_struct): self.auto_cc_mult,
@@ -749,133 +729,157 @@ class ckks_engine:
         
 
     def create_switcher(self, a: list[torch.Tensor], ksk: data_struct, level, exit_ntt=False) -> tuple:
-        # ksk parts allocation.
+        import torch.cuda.nccl as nccl
+
         ksk_alloc = self.parts_alloc[level]
-        
-        # Device lens and neighbor devices.
         len_devices = self.len_devices[level]
         neighbor_devices = self.neighbor_devices[level]
 
-        # Iterate over source device ids, and then part ids.
         num_parts = sum([len(alloc) for alloc in ksk_alloc])
+        # Structure: [part_id][0/1][device_id]
         part_results = [
-            [
-                [None for _ in range(len_devices)],
-                [None for _ in range(len_devices)]
-            ] for _ in range(num_parts)
+            [[None for _ in range(len_devices)], [None for _ in range(len_devices)]]
+            for _ in range(num_parts)
         ]
         
-        # 1. Generate states locally.
-        states = [[] for _ in range(num_parts)]
-        for src_device_id in range(len_devices):
-            for part_id in range(len(self.ntt.p.p[level][src_device_id])):
-                storage_id = self.stor_ids[level][src_device_id][part_id]
-                state = self.pre_extend(a, src_device_id, level, part_id, exit_ntt)
-                states[storage_id] = state
+        # 0. Build Stream List: Device 0 uses Current (Capturing), others use Side Comm
+        nccl_streams = []
+        for i in range(len_devices):
+            if i == 0:
+                nccl_streams.append(torch.cuda.current_stream(self.ntt.devices[i]))
+            else:
+                nccl_streams.append(self.comm_streams[i])
 
-        # ---------------------------------------------------------
-        # NEW: NCCL P2P Broadcast
-        # ---------------------------------------------------------
-        import torch.cuda.nccl as nccl
-        distributed_states = {}
+        # 1. Sync Default -> Comm (Side devices only)
+        # Ensures side streams wait for any prerequisite work on the default stream
+        for i in range(1, len_devices):
+             with torch.cuda.device(self.ntt.devices[i]):
+                 self.comm_streams[i].wait_stream(torch.cuda.current_stream())
+
+        # 2. Gather & Broadcast (NCCL)
+        distributed_states = {} # Key: (storage_id, dst_device_id) -> Tensor
 
         for src_device_id in range(len_devices):
-            for part_id in range(len(self.ntt.p.p[level][src_device_id])):
-                storage_id = self.stor_ids[level][src_device_id][part_id]
-                src_tensor = states[storage_id]
+            parts = self.ntt.p.p[level][src_device_id]
+            if len(parts) == 0:
+                continue
+
+            # Switch to the appropriate stream (Current or Comm)
+            with torch.cuda.device(self.ntt.devices[src_device_id]), torch.cuda.stream(nccl_streams[src_device_id]):
+                src_tensors = []
+                storage_ids = []
                 
-                # Prepare the list of tensors for NCCL
-                nccl_tensor_list = [None] * len_devices
-                nccl_tensor_list[src_device_id] = src_tensor
-                
-                for dst_dev_id in range(len_devices):
-                    if dst_dev_id != src_device_id:
-                        # [FIX] Explicitly allocate on the target device
-                        dst_tensor = torch.empty_like(
-                            src_tensor, 
-                            device=self.ntt.devices[dst_dev_id]
-                        )
-                        nccl_tensor_list[dst_dev_id] = dst_tensor
-
-                # Execute NCCL Broadcast
-                nccl.broadcast(nccl_tensor_list, root=src_device_id)
-
-                # Store results
-                for dst_dev_id in range(len_devices):
-                    if dst_dev_id != src_device_id:
-                        distributed_states[(storage_id, dst_dev_id)] = nccl_tensor_list[dst_dev_id]
-
-        torch.cuda.synchronize()
-        
-        # 3. Process Source Devices
-        for src_device_id in range(len_devices):
-            for part_id in range(len(self.ntt.p.p[level][src_device_id])):
-                storage_id = self.stor_ids[level][src_device_id][part_id]
-                d0, d1 = self.switcher_later_part(states[storage_id], ksk, src_device_id, src_device_id, level, part_id)
-                part_results[storage_id][0][src_device_id] = d0
-                part_results[storage_id][1][src_device_id] = d1
-        
-        # 6. Process Neighbor Devices (using distributed_states)
-        for src_device_id in range(len_devices):
-            for dst_device_id in neighbor_devices[src_device_id]:
-                for part_id in range(len(self.ntt.p.p[level][src_device_id])):
+                # A. Gather
+                for part_id in range(len(parts)):
                     storage_id = self.stor_ids[level][src_device_id][part_id]
-                    
-                    # Retrieve the broadcasted tensor
-                    CUDA_state = distributed_states[(storage_id, dst_device_id)]
-                    
-                    d0, d1 = self.switcher_later_part(CUDA_state, ksk, src_device_id, dst_device_id, level, part_id)
-                    part_results[storage_id][0][dst_device_id] = d0
-                    part_results[storage_id][1][dst_device_id] = d1
-                    
-        # 7. Sum up (Standard Logic)
-        summed0 = part_results[0][0]
-        summed1 = part_results[0][1]
-        
-        for i in range(1, len(part_results)):
-            summed0 = self.ntt.mont_add(summed0, part_results[i][0], level, -2)
-            summed1 = self.ntt.mont_add(summed1, part_results[i][1], level, -2)
+                    state = self.pre_extend(a, src_device_id, level, part_id, exit_ntt)
+                    src_tensors.append(state)
+                    storage_ids.append(storage_id)
+
+                split_sizes = [t.size(0) for t in src_tensors]
+                stacked_src = torch.cat(src_tensors, dim=0)
+
+            # B. Prepare NCCL List
+            nccl_list = [None] * len_devices
+            nccl_list[src_device_id] = stacked_src
             
+            for dst_dev_id in range(len_devices):
+                if dst_dev_id != src_device_id:
+                    with torch.cuda.device(self.ntt.devices[dst_dev_id]), torch.cuda.stream(nccl_streams[dst_dev_id]):
+                        nccl_list[dst_dev_id] = torch.empty_like(stacked_src, device=self.ntt.devices[dst_dev_id])
+
+            # C. Broadcast
+            nccl.broadcast(nccl_list, root=src_device_id, streams=nccl_streams)
+
+            # D. Scatter / Store References
+            for dst_dev_id in range(len_devices):
+                with torch.cuda.device(self.ntt.devices[dst_dev_id]), torch.cuda.stream(nccl_streams[dst_dev_id]):
+                     chunks = torch.split(nccl_list[dst_dev_id], split_sizes, dim=0)
+                     for i, storage_id in enumerate(storage_ids):
+                         distributed_states[(storage_id, dst_dev_id)] = chunks[i]
+
+        # 3. Compute (Switcher Later Part)
+        for src_device_id in range(len_devices):
+            for part_id in range(len(self.ntt.p.p[level][src_device_id])):
+                storage_id = self.stor_ids[level][src_device_id][part_id]
+                
+                for dst_device_id in range(len_devices):
+                     if (dst_device_id == src_device_id) or (dst_device_id in neighbor_devices[src_device_id]):
+                         tensor_on_dst = distributed_states[(storage_id, dst_device_id)]
+                         
+                         with torch.cuda.device(self.ntt.devices[dst_device_id]), torch.cuda.stream(nccl_streams[dst_device_id]):
+                             d0, d1 = self.switcher_later_part(tensor_on_dst, ksk, src_device_id, dst_device_id, level, part_id)
+                             part_results[storage_id][0][dst_device_id] = d0
+                             part_results[storage_id][1][dst_device_id] = d1
+
+        # 4. Sum up (Reduction)
+        # Initialize accumulators with the first part's results
+        summed0 = [part_results[0][0][d] for d in range(len_devices)]
+        summed1 = [part_results[0][1][d] for d in range(len_devices)]
+        
+        for i in range(1, num_parts):
+            for dev_id in range(len_devices):
+                if part_results[i][0][dev_id] is not None:
+                     with torch.cuda.device(self.ntt.devices[dev_id]), torch.cuda.stream(nccl_streams[dev_id]):
+                         # Wrap single tensors in lists to match mont_add signature safely
+                         res0 = self.ntt.mont_add([summed0[dev_id]], [part_results[i][0][dev_id]], level, -2)
+                         res1 = self.ntt.mont_add([summed1[dev_id]], [part_results[i][1][dev_id]], level, -2)
+                         summed0[dev_id] = res0[0]
+                         summed1[dev_id] = res1[0]
+
         d0 = summed0
         d1 = summed1
 
-        self.ntt.intt_exit_reduce(d0, level, -2)
-        self.ntt.intt_exit_reduce(d1, level, -2)       
+        # 5. Final Post-Processing (INTT on Streams)
+        for dev_id in range(len_devices):
+            with torch.cuda.device(self.ntt.devices[dev_id]), torch.cuda.stream(nccl_streams[dev_id]):
+                self.ntt.intt_exit_reduce([d0[dev_id]], level, -2)
+                self.ntt.intt_exit_reduce([d1[dev_id]], level, -2) 
+
+        # 6. Sync Comm -> Default (Side devices only)
+        # Ensure the main program waits for the side streams to finish
+        for i in range(1, len_devices):
+            with torch.cuda.device(self.ntt.devices[i]):
+                torch.cuda.current_stream().wait_stream(self.comm_streams[i])     
         
+        # 7. Remaining Logic (c0, c1 extraction) on Default Streams
         c0 = [d[:-self.ntt.num_special_primes] for d in d0]
         c1 = [d[:-self.ntt.num_special_primes] for d in d1]
         
         self.ntt.mont_enter(c0, level, -1)
         self.ntt.mont_enter(c1, level, -1)
-
+        
         current_len = [len(d) for d in self.ntt.p.destination_arrays_with_special[level]]
         
         for P_ind in range(self.ntt.num_special_primes):
             PiRi = self.PiRs[level][P_ind]
+            
             P0 = [d[-1-P_ind].repeat(current_len[di], 1) for di, d in enumerate(d0)]
             P1 = [d[-1-P_ind].repeat(current_len[di], 1) for di, d in enumerate(d1)]
             Q0 = [d[:-self.ntt.num_special_primes] for d in P0]
             Q1 = [d[:-self.ntt.num_special_primes] for d in P1]
+            
             self.ntt.mont_enter(Q0, level, -1)
             self.ntt.mont_enter(Q1, level, -1)
+            
             d0 = self.ntt.mont_sub(d0, P0, level, -2)
             d1 = self.ntt.mont_sub(d1, P1, level, -2)
+            
             self.ntt.mont_enter_scalar(d0, PiRi, level, -2)
             self.ntt.mont_enter_scalar(d1, PiRi, level, -2)
+            
             self.ntt.reduce_2q(d0, level, -1)
             self.ntt.reduce_2q(d1, level, -1)
 
         c0 = [d[:-self.ntt.num_special_primes] for d in d0]
         c1 = [d[:-self.ntt.num_special_primes] for d in d1]
         
-        # Exit the montgomery.
         self.ntt.mont_redc(c0, level, -1)
         self.ntt.mont_redc(c1, level, -1)
         
         self.ntt.reduce_2q(c0, level, -1)
         self.ntt.reduce_2q(c1, level, -1)
         
-        # 7. Return
         return c0, c1
 
     def switcher_later_part(self,
